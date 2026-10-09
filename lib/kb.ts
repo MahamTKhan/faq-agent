@@ -1,4 +1,5 @@
 import type { db } from "./db";
+import { trackerSummary } from "./tracker";
 
 type Sql = Awaited<ReturnType<typeof db>>;
 
@@ -51,17 +52,17 @@ export async function reindexDocument(sql: Sql, documentId: string, projectId: s
 export async function createDocument(
   sql: Sql,
   projectId: string,
-  input: { title: string; kind: DocKind; content: string; sourceName?: string },
+  input: { title: string; kind: DocKind; content: string; sourceName?: string; shared?: boolean },
 ) {
   const [doc] = await sql<{ id: string }[]>`
-    INSERT INTO documents (project_id, title, kind, source_name, content)
-    VALUES (${projectId}, ${input.title}, ${input.kind}, ${input.sourceName || ""}, ${input.content})
+    INSERT INTO documents (project_id, title, kind, source_name, content, shared)
+    VALUES (${projectId}, ${input.title}, ${input.kind}, ${input.sourceName || ""}, ${input.content}, ${input.shared === true})
     RETURNING id`;
   await reindexDocument(sql, doc.id, projectId, input.content);
   return doc.id;
 }
 
-type DocRow = { id: string; title: string; kind: string; content: string; updated_at: Date };
+type DocRow = { id: string; project_id: string; title: string; kind: string; content: string; updated_at: Date; shared: boolean };
 
 const KIND_LABEL: Record<string, string> = {
   document: "Document",
@@ -72,9 +73,16 @@ const KIND_LABEL: Record<string, string> = {
 
 const esc = (s: string) => s.replace(/"/g, "'");
 
-function formatDoc(d: { title: string; kind: string; updated_at: Date }, body: string, n: number) {
+function formatDoc(d: { title: string; kind: string; updated_at: Date; shared?: boolean }, body: string, n: number) {
   const date = new Date(d.updated_at).toISOString().slice(0, 10);
-  return `<source id="${n}" title="${esc(d.title)}" type="${KIND_LABEL[d.kind] || d.kind}" updated="${date}">\n${body}\n</source>`;
+  const type = `${KIND_LABEL[d.kind] || d.kind}${d.shared ? " — shared team knowledge that applies to all projects" : ""}`;
+  return `<source id="${n}" title="${esc(d.title)}" type="${type}" updated="${date}">\n${body}\n</source>`;
+}
+
+function withTracker(text: string, tracker: string, n: number) {
+  if (!tracker) return text;
+  const block = `<source id="${n}" title="Project tracker" type="Live list of open action items, kept by the project team">\n${tracker}\n</source>`;
+  return text ? `${text}\n\n${block}` : block;
 }
 
 /**
@@ -87,11 +95,14 @@ export async function buildKnowledge(
   projectId: string,
   query: string,
 ): Promise<{ text: string; mode: "full" | "search" | "empty"; docCount: number }> {
-  const docs = await sql<DocRow[]>`
-    SELECT id, title, kind, content, updated_at FROM documents
-    WHERE project_id = ${projectId}
-    ORDER BY (kind = 'faq') DESC, updated_at DESC`;
-  if (!docs.length) return { text: "", mode: "empty", docCount: 0 };
+  const [docs, tracker] = await Promise.all([
+    sql<DocRow[]>`
+      SELECT id, project_id, title, kind, content, updated_at, shared FROM documents
+      WHERE project_id = ${projectId} OR shared
+      ORDER BY (kind = 'faq') DESC, updated_at DESC`,
+    trackerSummary(sql, projectId),
+  ]);
+  if (!docs.length && !tracker) return { text: "", mode: "empty", docCount: 0 };
 
   const budget = Number(process.env.MAX_CONTEXT_CHARS) || 400_000;
   const total = docs.reduce((n, d) => n + d.content.length, 0);
@@ -99,7 +110,7 @@ export async function buildKnowledge(
     // Stable order so the prompt cache can be reused between questions.
     const ordered = [...docs].sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
     return {
-      text: ordered.map((d, i) => formatDoc(d, d.content, i + 1)).join("\n\n"),
+      text: withTracker(ordered.map((d, i) => formatDoc(d, d.content, i + 1)).join("\n\n"), tracker, ordered.length + 1),
       mode: "full",
       docCount: docs.length,
     };
@@ -113,7 +124,7 @@ export async function buildKnowledge(
     hits = await sql<Hit[]>`
       SELECT c.document_id, c.position, c.content, ts_rank(c.tsv, q) AS rank
       FROM chunks c, to_tsquery('english', ${tsq}) q
-      WHERE c.project_id = ${projectId} AND c.tsv @@ q
+      WHERE (c.project_id = ${projectId} OR c.document_id IN (SELECT id FROM documents WHERE shared)) AND c.tsv @@ q
       ORDER BY rank DESC
       LIMIT 80`;
   }
@@ -149,5 +160,5 @@ export async function buildKnowledge(
   const header =
     `The full knowledge base is too large to include, so only the passages most relevant to the latest question are shown below. ` +
     `If the answer is not in these passages, treat it as not found. All documents in the knowledge base:\n${list}\n\n`;
-  return { text: header + parts.join("\n\n"), mode: "search", docCount: docs.length };
+  return { text: withTracker(header + parts.join("\n\n"), tracker, n + 1), mode: "search", docCount: docs.length };
 }

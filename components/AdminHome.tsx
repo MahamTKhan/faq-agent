@@ -21,11 +21,15 @@ type ProjectRow = {
   answered: number;
   escalated: number;
   answer_rate: number | null;
+  client_items: number;
+  overdue_us: number;
+  suggested_items: number;
   health: Health;
   spark: number[];
 };
 type NeedsItem = { id: string; project_id: string; project_name: string; question: string; visitor_email: string; created_at: string };
-type Dashboard = { totals: Totals; daily: DayPoint[]; projects: ProjectRow[]; needsYou: NeedsItem[]; sparkDays: string[] };
+type Review = { project_id: string; project_name: string; count: number };
+type Dashboard = { totals: Totals; daily: DayPoint[]; projects: ProjectRow[]; needsYou: NeedsItem[]; reviews?: Review[]; sparkDays: string[] };
 
 function greeting() {
   const h = new Date().getHours();
@@ -181,7 +185,7 @@ export default function AdminHome({ appName, adminName }: { appName: string; adm
                     <p>Oldest first</p>
                   </div>
                 </div>
-                {data.needsYou.length === 0 ? (
+                {data.needsYou.length === 0 && !(data.reviews || []).length ? (
                   <div className="empty-state">
                     <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="var(--good)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                       <circle cx="12" cy="12" r="9.5" />
@@ -191,6 +195,19 @@ export default function AdminHome({ appName, adminName }: { appName: string; adm
                   </div>
                 ) : (
                   <div style={{ marginTop: 8 }}>
+                    {(data.reviews || []).map((r) => (
+                      <Link key={`r-${r.project_id}`} href={`/admin/projects/${r.project_id}?tab=tracker`} className="needs-item">
+                        <div className="grow">
+                          <div className="q">
+                            {r.count} new action item{r.count === 1 ? "" : "s"} found in emails
+                          </div>
+                          <div className="tiny muted ellipsis" style={{ marginTop: 3 }}>
+                            {r.project_name}, review and confirm
+                          </div>
+                        </div>
+                        <span className="age">New</span>
+                      </Link>
+                    ))}
                     {data.needsYou.map((q) => {
                       const age = ageLabel(q.created_at);
                       return (
@@ -251,8 +268,8 @@ export default function AdminHome({ appName, adminName }: { appName: string; adm
                           <div className="v">{p.open_count}</div>
                         </div>
                         <div className="hstat">
-                          <div className="k">Documents</div>
-                          <div className="v">{p.doc_count}</div>
+                          <div className="k">Pending from client</div>
+                          <div className="v">{p.client_items ?? 0}</div>
                         </div>
                       </div>
                       <Meter value={p.answer_rate} />

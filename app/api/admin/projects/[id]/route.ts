@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { inboundAddressFor } from "@/lib/inbound";
 import { handle, HttpError, isEmail, isUuid, json, randomSlug, readJson, requireAdmin, str } from "@/lib/http";
 
 export const runtime = "nodejs";
@@ -18,8 +19,8 @@ export const GET = handle(async (req: Request, ctx: Ctx) => {
   const sql = await db();
   const [project] = await sql`SELECT * FROM projects WHERE id = ${id}`;
   if (!project) throw new HttpError(404, "Project not found.");
-  const [documents, questions, conversations] = await Promise.all([
-    sql`SELECT id, title, kind, source_name, length(content)::int AS chars, created_at, updated_at
+  const [documents, questions, conversations, sharedDocs, generated, itemCounts] = await Promise.all([
+    sql`SELECT id, title, kind, source_name, shared, length(content)::int AS chars, created_at, updated_at
         FROM documents WHERE project_id = ${id} ORDER BY updated_at DESC`,
     sql`SELECT * FROM questions WHERE project_id = ${id}
         ORDER BY (status = 'open') DESC, created_at DESC LIMIT 300`,
@@ -29,8 +30,26 @@ export const GET = handle(async (req: Request, ctx: Ctx) => {
           (SELECT count(*)::int FROM messages m WHERE m.conversation_id = c.id AND m.status = 'escalated') AS escalated_count
         FROM conversations c WHERE c.project_id = ${id}
         ORDER BY c.last_message_at DESC LIMIT 300`,
+    sql`SELECT d.id, d.title, d.kind, length(d.content)::int AS chars, d.updated_at, p.name AS project_name
+        FROM documents d JOIN projects p ON p.id = d.project_id
+        WHERE d.shared AND d.project_id <> ${id} ORDER BY d.updated_at DESC`,
+    sql`SELECT id, kind, title, published, created_at, updated_at FROM generated_docs WHERE project_id = ${id} ORDER BY updated_at DESC`,
+    sql`SELECT count(*) FILTER (WHERE status = 'suggested')::int AS suggested,
+          count(*) FILTER (WHERE status = 'open')::int AS open,
+          count(*) FILTER (WHERE status = 'open' AND due_date < current_date)::int AS overdue
+        FROM action_items WHERE project_id = ${id}`,
   ]);
-  return json({ project, documents, questions, conversations, adminEmail: process.env.ADMIN_EMAIL || "" });
+  return json({
+    project,
+    documents,
+    questions,
+    conversations,
+    sharedDocs,
+    generated,
+    itemCounts: itemCounts[0],
+    inboundAddress: inboundAddressFor(project.inbound_key),
+    adminEmail: process.env.ADMIN_EMAIL || "",
+  });
 });
 
 export const PATCH = handle(async (req: Request, ctx: Ctx) => {

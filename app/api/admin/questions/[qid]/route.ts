@@ -77,6 +77,7 @@ export const PATCH = handle(async (req: Request, ctx: Ctx) => {
       kind: "faq",
       content: `Question: ${question}\n\nAnswer (confirmed by the project team on ${new Date().toISOString().slice(0, 10)}):\n${reply}`,
       sourceName: `${appName()} – answered question`,
+      shared: body.shared === true,
     });
   }
 

@@ -82,4 +82,42 @@ CREATE TABLE IF NOT EXISTS rate_hits (
   at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS rate_hits_idx ON rate_hits(key, at);
+
+-- v2: forwarding addresses, shared knowledge, tracker, generated documents
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS inbound_key text;
+UPDATE projects SET inbound_key = substr(md5(random()::text || id::text), 1, 10) WHERE inbound_key IS NULL;
+ALTER TABLE projects ALTER COLUMN inbound_key SET DEFAULT substr(md5(random()::text || clock_timestamp()::text), 1, 10);
+CREATE UNIQUE INDEX IF NOT EXISTS projects_inbound_key_idx ON projects(inbound_key);
+
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS shared boolean NOT NULL DEFAULT false;
+CREATE INDEX IF NOT EXISTS documents_shared_idx ON documents(shared) WHERE shared;
+
+CREATE TABLE IF NOT EXISTS action_items (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  title text NOT NULL,
+  owner text NOT NULL DEFAULT 'client',
+  owner_name text NOT NULL DEFAULT '',
+  due_date date,
+  status text NOT NULL DEFAULT 'open',
+  source_document_id uuid REFERENCES documents(id) ON DELETE SET NULL,
+  source_quote text NOT NULL DEFAULT '',
+  done_hint text NOT NULL DEFAULT '',
+  origin text NOT NULL DEFAULT 'manual',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  done_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS action_items_project_idx ON action_items(project_id, status);
+
+CREATE TABLE IF NOT EXISTS generated_docs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  kind text NOT NULL,
+  title text NOT NULL,
+  content text NOT NULL,
+  published boolean NOT NULL DEFAULT false,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS generated_docs_project_idx ON generated_docs(project_id, updated_at DESC);
 `;

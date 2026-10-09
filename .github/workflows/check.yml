@@ -7,6 +7,23 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      ADMIN_PASSWORD: test-password-123
+      SESSION_SECRET: test-session-secret-0123456789abcdef
+      ANTHROPIC_API_KEY: test-key
+      ANTHROPIC_BASE_URL: http://localhost:4599
+      ADMIN_EMAIL: owner@example.com
+      INBOUND_EMAIL_ADDRESS: abc123@inbound.postmarkapp.com
+      INBOUND_SECRET: test-inbound-secret-123
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -17,3 +34,12 @@ jobs:
         run: npx tsc --noEmit
       - name: Build
         run: npm run build
+      - name: End-to-end test
+        run: |
+          node scripts/mock-claude.mjs > mock.log 2>&1 &
+          npm start > app.log 2>&1 &
+          for i in $(seq 1 60); do curl -s -o /dev/null http://localhost:3000/login && break; sleep 1; done
+          node scripts/e2e.mjs
+      - name: App log (on failure)
+        if: failure()
+        run: tail -n 120 app.log || true

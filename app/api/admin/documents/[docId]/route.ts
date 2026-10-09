@@ -32,8 +32,9 @@ export const PATCH = handle(async (req: Request, ctx: Ctx) => {
   const title = typeof body.title === "string" ? str(body.title, 300).trim() || cur.title : cur.title;
   const content = typeof body.content === "string" ? str(body.content, 2_000_000) : cur.content;
   const kind = body.kind ? normalizeKind(body.kind) : cur.kind;
+  const shared = typeof body.shared === "boolean" ? body.shared : cur.shared;
   if (!content.trim()) throw new HttpError(400, "A document can't be empty. Delete it instead.");
-  await sql`UPDATE documents SET title = ${title}, content = ${content}, kind = ${kind}, updated_at = now() WHERE id = ${id}`;
+  await sql`UPDATE documents SET title = ${title}, content = ${content}, kind = ${kind}, shared = ${shared}, updated_at = now() WHERE id = ${id}`;
   if (content !== cur.content) await reindexDocument(sql, id, cur.project_id, content);
   return json({ ok: true });
 });

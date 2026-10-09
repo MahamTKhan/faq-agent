@@ -5,6 +5,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import AdminBar from "./AdminBar";
 import { api, sizeLabel, timeAgo } from "./client-utils";
 import Markdown from "./Markdown";
+import Modal from "./Modal";
+import { ClientDocsTab, TrackerTab } from "./ProjectExtras";
 import { ActivityChart, StatTiles, type DayPoint, type Totals } from "./charts";
 
 type Project = {
@@ -19,7 +21,9 @@ type Project = {
   active: boolean;
   created_at: string;
 };
-type Doc = { id: string; title: string; kind: string; source_name: string; chars: number; created_at: string; updated_at: string };
+type Doc = { id: string; title: string; kind: string; source_name: string; shared?: boolean; chars: number; created_at: string; updated_at: string };
+type SharedDoc = { id: string; title: string; kind: string; chars: number; updated_at: string; project_name: string };
+export type GeneratedRow = { id: string; kind: string; title: string; published: boolean; created_at: string; updated_at: string };
 type Question = {
   id: string;
   conversation_id: string | null;
@@ -43,8 +47,18 @@ type Conversation = {
   first_question: string | null;
   escalated_count: number;
 };
-type Data = { project: Project; documents: Doc[]; questions: Question[]; conversations: Conversation[]; adminEmail: string };
-type Tab = "questions" | "insights" | "knowledge" | "conversations" | "settings";
+export type Data = {
+  project: Project;
+  documents: Doc[];
+  questions: Question[];
+  conversations: Conversation[];
+  sharedDocs?: SharedDoc[];
+  generated?: GeneratedRow[];
+  itemCounts?: { suggested: number; open: number; overdue: number };
+  inboundAddress?: string;
+  adminEmail: string;
+};
+type Tab = "questions" | "insights" | "tracker" | "knowledge" | "docs" | "conversations" | "settings";
 
 function useToast() {
   const [toast, setToast] = useState<{ text: string; error?: boolean } | null>(null);
@@ -82,7 +96,7 @@ export default function ProjectAdmin({ id, appName, mailReady, aiReady }: { id: 
     if (q) {
       setFocusQ(q);
       setTab("questions");
-    } else if (t && ["questions", "insights", "knowledge", "conversations", "settings"].includes(t)) setTab(t);
+    } else if (t && ["questions", "insights", "tracker", "knowledge", "docs", "conversations", "settings"].includes(t)) setTab(t);
     reload();
   }, [reload]);
 
@@ -189,8 +203,17 @@ export default function ProjectAdmin({ id, appName, mailReady, aiReady }: { id: 
           <button className={`tab${tab === "insights" ? " active" : ""}`} onClick={() => go("insights")}>
             Insights
           </button>
+          <button className={`tab${tab === "tracker" ? " active" : ""}`} onClick={() => go("tracker")}>
+            Tracker{" "}
+            <span className={`count${data.itemCounts?.suggested ? " hot" : ""}`} title={data.itemCounts?.suggested ? "New items to review" : "Open items"}>
+              {data.itemCounts?.suggested ? data.itemCounts.suggested : data.itemCounts?.open ?? 0}
+            </span>
+          </button>
           <button className={`tab${tab === "knowledge" ? " active" : ""}`} onClick={() => go("knowledge")}>
             Knowledge base <span className="count">{data.documents.length}</span>
+          </button>
+          <button className={`tab${tab === "docs" ? " active" : ""}`} onClick={() => go("docs")}>
+            Client docs <span className="count">{data.generated?.length ?? 0}</span>
           </button>
           <button className={`tab${tab === "conversations" ? " active" : ""}`} onClick={() => go("conversations")}>
             Conversations <span className="count">{data.conversations.length}</span>
@@ -202,6 +225,8 @@ export default function ProjectAdmin({ id, appName, mailReady, aiReady }: { id: 
 
         {tab === "questions" && <QuestionsTab data={data} reload={reload} toast={toast.show} mailReady={mailReady} focusId={focusQ} />}
         {tab === "insights" && <InsightsTab projectId={data.project.id} oldestOpen={data.questions.filter((q) => q.status === "open").map((q) => q.created_at).sort()[0] || null} />}
+        {tab === "tracker" && <TrackerTab data={data} reload={reload} toast={toast.show} aiReady={aiReady} />}
+        {tab === "docs" && <ClientDocsTab data={data} reload={reload} toast={toast.show} aiReady={aiReady} />}
         {tab === "knowledge" && <KnowledgeTab data={data} reload={reload} toast={toast.show} aiReady={aiReady} />}
         {tab === "conversations" && <ConversationsTab data={data} reload={reload} />}
         {tab === "settings" && <SettingsTab data={data} reload={reload} toast={toast.show} />}
@@ -305,6 +330,7 @@ function QuestionCard({
   const [email, setEmail] = useState(q.visitor_email);
   const [sendEmail, setSendEmail] = useState(Boolean(q.visitor_email) && mailReady);
   const [addToKb, setAddToKb] = useState(true);
+  const [shareAll, setShareAll] = useState(false);
   const [busy, setBusy] = useState("");
   const [showBot, setShowBot] = useState(false);
 
@@ -399,9 +425,14 @@ function QuestionCard({
             <label className="check">
               <input type="checkbox" checked={addToKb} onChange={(e) => setAddToKb(e.target.checked)} /> Add to knowledge base
             </label>
+            {addToKb && (
+              <label className="check" title="Every project's assistant will use this answer. Don't include bank-specific details.">
+                <input type="checkbox" checked={shareAll} onChange={(e) => setShareAll(e.target.checked)} /> Use in all projects
+              </label>
+            )}
           </div>
           <div className="row wrap">
-            <button className="btn btn-primary" disabled={!reply.trim() || placeholders > 0 || Boolean(busy) || (sendEmail && !email)} onClick={() => act("answer", { reply, sendEmail, addToKb })}>
+            <button className="btn btn-primary" disabled={!reply.trim() || placeholders > 0 || Boolean(busy) || (sendEmail && !email)} onClick={() => act("answer", { reply, sendEmail, addToKb, shared: addToKb && shareAll })}>
               {busy === "answer" && <span className="spinner" />}
               {sendEmail ? "Send answer" : "Post answer in chat"}
             </button>
@@ -428,7 +459,7 @@ const ACCEPT = ".pdf,.docx,.eml,.msg,.txt,.md,.markdown,.csv,.tsv,.json,.html,.h
 function KnowledgeTab({ data, reload, toast, aiReady }: { data: Data; reload: () => Promise<void>; toast: (t: string, e?: boolean) => void; aiReady: boolean }) {
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [over, setOver] = useState(false);
-  const [paste, setPaste] = useState<{ open: boolean; title: string; kind: string; content: string }>({ open: false, title: "", kind: "email", content: "" });
+  const [paste, setPaste] = useState<{ open: boolean; title: string; kind: string; content: string; shared: boolean }>({ open: false, title: "", kind: "email", content: "", shared: false });
   const [savingPaste, setSavingPaste] = useState(false);
   const [viewDoc, setViewDoc] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -517,8 +548,8 @@ function KnowledgeTab({ data, reload, toast, aiReady }: { data: Data; reload: ()
     e.preventDefault();
     setSavingPaste(true);
     try {
-      await api(`/api/admin/projects/${projectId}/documents`, { body: { title: paste.title, kind: paste.kind, content: paste.content } });
-      setPaste({ open: false, title: "", kind: "email", content: "" });
+      await api(`/api/admin/projects/${projectId}/documents`, { body: { title: paste.title, kind: paste.kind, content: paste.content, shared: paste.shared } });
+      setPaste({ open: false, title: "", kind: "email", content: "", shared: false });
       toast("Added to the knowledge base");
       await reload();
     } catch (err) {
@@ -538,6 +569,8 @@ function KnowledgeTab({ data, reload, toast, aiReady }: { data: Data; reload: ()
           clients&apos; details.
         </span>
       </div>
+
+      <ForwardingCard address={data.inboundAddress || ""} toast={toast} />
 
       <div className="stack">
         <div
@@ -632,6 +665,10 @@ function KnowledgeTab({ data, reload, toast, aiReady }: { data: Data; reload: ()
               <span className="label">Text</span>
               <textarea className="textarea" rows={10} value={paste.content} onChange={(e) => setPaste({ ...paste, content: e.target.value })} placeholder="Paste the whole thread, including who said what and the dates." />
             </label>
+            <label className="check" title="Every project's assistant will use this. Don't include bank-specific details.">
+              <input type="checkbox" checked={paste.shared} onChange={(e) => setPaste({ ...paste, shared: e.target.checked })} /> Use in all projects (general Wavetec knowledge, nothing bank-specific)
+            </label>
+            {(paste.kind === "email" || paste.kind === "note") && <div className="hint">Action items in it are picked up for the Tracker automatically.</div>}
             <div className="row">
               <button className="btn btn-primary" disabled={!paste.content.trim() || savingPaste}>
                 {savingPaste && <span className="spinner" />} Add to knowledge base
@@ -659,8 +696,11 @@ function KnowledgeTab({ data, reload, toast, aiReady }: { data: Data; reload: ()
               <div key={d.id} className="list-item clickable" onClick={() => setViewDoc(d.id)}>
                 <div className={`doc-icon ${d.kind}`}>{d.kind === "email" ? "MAIL" : d.kind === "faq" ? "Q&A" : d.kind === "note" ? "NOTE" : (d.source_name.split(".").pop() || "DOC").slice(0, 4).toUpperCase()}</div>
                 <div className="grow">
-                  <div className="ellipsis" style={{ fontWeight: 560 }}>
-                    {d.title}
+                  <div className="row" style={{ gap: 8 }}>
+                    <span className="ellipsis" style={{ fontWeight: 560 }}>
+                      {d.title}
+                    </span>
+                    {d.shared && <span className="badge accent">All projects</span>}
                   </div>
                   <div className="tiny muted ellipsis">
                     {sizeLabel(d.chars)} · updated {timeAgo(d.updated_at)}
@@ -673,6 +713,32 @@ function KnowledgeTab({ data, reload, toast, aiReady }: { data: Data; reload: ()
           </div>
         )}
       </div>
+
+      {(data.sharedDocs?.length ?? 0) > 0 && (
+        <div className="card">
+          <div className="card-head">
+            <div className="grow">
+              <h2>Shared from other projects</h2>
+              <p className="tiny muted">General knowledge marked “Use in all projects”. The assistant uses these here too.</p>
+            </div>
+          </div>
+          <div className="list">
+            {data.sharedDocs!.map((d) => (
+              <div key={d.id} className="list-item clickable" onClick={() => setViewDoc(d.id)}>
+                <div className={`doc-icon ${d.kind}`}>{d.kind === "email" ? "MAIL" : d.kind === "faq" ? "Q&A" : d.kind === "note" ? "NOTE" : "DOC"}</div>
+                <div className="grow">
+                  <div className="ellipsis" style={{ fontWeight: 560 }}>
+                    {d.title}
+                  </div>
+                  <div className="tiny muted ellipsis">
+                    From {d.project_name}, {sizeLabel(d.chars)}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {viewDoc && (
         <DocModal
@@ -688,15 +754,49 @@ function KnowledgeTab({ data, reload, toast, aiReady }: { data: Data; reload: ()
   );
 }
 
+function ForwardingCard({ address, toast }: { address: string; toast: (t: string, e?: boolean) => void }) {
+  if (!address) {
+    return (
+      <div className="notice info">
+        <span>
+          <b>Forward emails straight into this project.</b> Set up email forwarding once (see the README, “Forward emails”) and each project gets its own
+          address. Forwarded threads land here automatically and their action items go to the Tracker.
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div className="card card-pad stack" style={{ gap: 8 }}>
+      <div>
+        <h3>Forward emails to this project</h3>
+        <p className="small muted">Forward or CC any thread to this address. It&apos;s added here within a minute, attachments included, and its action items go to the Tracker.</p>
+      </div>
+      <div className="share">
+        <code className="mono small">{address}</code>
+        <button
+          className="btn btn-sm"
+          onClick={() => {
+            navigator.clipboard.writeText(address);
+            toast("Address copied");
+          }}
+        >
+          Copy
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function DocModal({ id, onClose, onChanged }: { id: string; onClose: () => void; onChanged: (msg: string) => Promise<void> }) {
-  const [doc, setDoc] = useState<{ title: string; kind: string; content: string; source_name: string } | null>(null);
+  const [doc, setDoc] = useState<{ title: string; kind: string; content: string; source_name: string; shared: boolean } | null>(null);
+  const [scanning, setScanning] = useState(false);
   const [draft, setDraft] = useState({ title: "", kind: "document", content: "" });
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    api<{ document: { title: string; kind: string; content: string; source_name: string } }>(`/api/admin/documents/${id}`)
+    api<{ document: { title: string; kind: string; content: string; source_name: string; shared: boolean } }>(`/api/admin/documents/${id}`)
       .then((d) => {
         setDoc(d.document);
         setDraft({ title: d.document.title, kind: d.document.kind, content: d.document.content });
@@ -714,6 +814,36 @@ function DocModal({ id, onClose, onChanged }: { id: string; onClose: () => void;
     } catch (e) {
       setError((e as Error).message);
       setBusy(false);
+    }
+  }
+  async function toggleShared() {
+    if (!doc) return;
+    if (!doc.shared && !confirm("Use this in every project? All clients' assistants will be able to quote it, so make sure it has nothing bank-specific.")) return;
+    setBusy(true);
+    try {
+      await api(`/api/admin/documents/${id}`, { method: "PATCH", body: { shared: !doc.shared } });
+      setDoc({ ...doc, shared: !doc.shared });
+      await onChanged(doc.shared ? "Now used in this project only" : "Now used in all projects");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function scan() {
+    setScanning(true);
+    setError("");
+    try {
+      const r = await api<{ added: number; completed: number }>(`/api/admin/documents/${id}/extract`, { body: {} });
+      await onChanged(
+        r.added || r.completed
+          ? `Found ${r.added} new item${r.added === 1 ? "" : "s"}${r.completed ? ` and ${r.completed} that look done` : ""}. Review them in the Tracker tab.`
+          : "No new action items found",
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setScanning(false);
     }
   }
   async function remove() {
@@ -777,9 +907,17 @@ function DocModal({ id, onClose, onChanged }: { id: string; onClose: () => void;
             </button>
           </>
         ) : (
-          <button className="btn" onClick={() => setEditing(true)} disabled={!doc}>
-            Edit text
-          </button>
+          <>
+            <button className="btn" onClick={toggleShared} disabled={!doc || busy} title="Shared knowledge is used by every project's assistant">
+              {doc?.shared ? "Use in this project only" : "Use in all projects"}
+            </button>
+            <button className="btn" onClick={scan} disabled={!doc || scanning}>
+              {scanning && <span className="spinner" />} Find action items
+            </button>
+            <button className="btn" onClick={() => setEditing(true)} disabled={!doc}>
+              Edit text
+            </button>
+          </>
         )}
       </div>
     </Modal>
@@ -1018,32 +1156,5 @@ function SettingsTab({ data, reload, toast }: { data: Data; reload: () => Promis
         </div>
       </div>
     </section>
-  );
-}
-
-/* ───────────────────────────── Modal ───────────────────────────── */
-
-function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    document.body.style.overflow = "hidden";
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
-    };
-  }, [onClose]);
-  return (
-    <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="card modal" role="dialog" aria-modal="true">
-        <div className="card-head">
-          <h2 className="grow ellipsis">{title}</h2>
-          <button className="btn btn-ghost btn-sm" onClick={onClose} aria-label="Close">
-            ✕
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
   );
 }

@@ -89,6 +89,7 @@ export function healthOf(p: {
   oldest_open: Date | string | null;
   answered: number;
   escalated: number;
+  overdue_us?: number;
 }): Health {
   if (!p.active) return { level: "paused", label: "Paused", reason: "Client link is switched off" };
   const waitingHours = p.oldest_open ? (Date.now() - new Date(p.oldest_open).getTime()) / 3_600_000 : 0;
@@ -101,6 +102,8 @@ export function healthOf(p: {
     return { level: "critical", label: "Needs attention", reason: `The assistant answered only ${Math.round((p.answered / total) * 100)}% — add documents` };
   }
   if (p.open_count > 0) return { level: "warning", label: "Waiting on you", reason: `${p.open_count} question${p.open_count === 1 ? "" : "s"} to answer` };
+  if (p.overdue_us && p.overdue_us > 0)
+    return { level: "warning", label: "Overdue items", reason: `${p.overdue_us} of your tracker item${p.overdue_us === 1 ? " is" : "s are"} past due` };
   if (p.doc_count === 0) return { level: "warning", label: "Set up", reason: "No documents yet — the assistant can't answer" };
   return { level: "good", label: "On track", reason: total ? "All questions handled" : "Ready for client questions" };
 }
@@ -124,6 +127,9 @@ export async function getDashboard(sql: Sql) {
         oldest_open: Date | null;
         answered: number;
         escalated: number;
+        client_items: number;
+        overdue_us: number;
+        suggested_items: number;
       }[]
     >`
       SELECT p.id, p.name, p.client_name, p.slug, p.active, p.created_at,
@@ -132,7 +138,10 @@ export async function getDashboard(sql: Sql) {
         (SELECT max(c.last_message_at) FROM conversations c WHERE c.project_id = p.id) AS last_activity,
         (SELECT count(*)::int FROM questions q WHERE q.project_id = p.id AND q.status = 'open') AS open_count,
         (SELECT min(q.created_at) FROM questions q WHERE q.project_id = p.id AND q.status = 'open') AS oldest_open,
-        coalesce(s.answered, 0) AS answered, coalesce(s.escalated, 0) AS escalated
+        coalesce(s.answered, 0) AS answered, coalesce(s.escalated, 0) AS escalated,
+        (SELECT count(*)::int FROM action_items a WHERE a.project_id = p.id AND a.status = 'open' AND a.owner = 'client') AS client_items,
+        (SELECT count(*)::int FROM action_items a WHERE a.project_id = p.id AND a.status = 'open' AND a.owner = 'us' AND a.due_date < current_date) AS overdue_us,
+        (SELECT count(*)::int FROM action_items a WHERE a.project_id = p.id AND a.status = 'suggested') AS suggested_items
       FROM projects p
       LEFT JOIN LATERAL (
         SELECT count(*) FILTER (WHERE m.status = 'answered')::int AS answered,
@@ -171,5 +180,8 @@ export async function getDashboard(sql: Sql) {
     }))
     .sort((a, b) => order[a.health.level] - order[b.health.level]);
 
-  return { totals, daily, projects, needsYou, sparkDays: days14 };
+  const reviews = projects
+    .filter((p) => p.suggested_items > 0)
+    .map((p) => ({ project_id: p.id, project_name: p.name, count: p.suggested_items }));
+  return { totals, daily, projects, needsYou, reviews, sparkDays: days14 };
 }

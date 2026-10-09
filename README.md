@@ -39,6 +39,9 @@ The tables are created automatically on first use. There's nothing to run.
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | Email sending details, see below |
 | `APP_NAME` *(optional)* | Name shown in the app and emails, default "Project Desk" |
 | `ADMIN_NAME` *(optional)* | Your first name, for the dashboard greeting |
+| `INBOUND_EMAIL_ADDRESS` *(optional)* | Your Postmark inbound address, for forwarding emails (see below) |
+| `INBOUND_SECRET` *(optional)* | Any random 16+ characters; protects the forwarding webhook |
+| `INBOUND_ALLOWED_SENDERS` *(optional)* | Extra addresses allowed to forward, comma-separated; `@company.com` allows a whole domain |
 
 **Email sending options**
 
@@ -55,6 +58,28 @@ Click **Deploy**. When it's done, open `https://<your-app>.vercel.app/admin` and
 If you change an environment variable later, go to **Deployments → ⋯ → Redeploy** so the change takes effect.
 
 ---
+
+---
+
+## Forward emails into a project (optional, about 10 minutes)
+
+Each project gets its own address. Forward or CC an email thread to it and it's added to that project's knowledge base, attachments included. Its action items go to the Tracker for you to confirm.
+
+1. Sign up at [postmarkapp.com](https://postmarkapp.com) (the free developer plan covers about 100 emails a month; check their pricing page).
+2. Create a **Server**, then open its **Default Inbound Stream → Settings**. Copy the **inbound address** (it looks like `abc123@inbound.postmarkapp.com`).
+3. In the same settings, set the **Webhook URL** to `https://<your-app>.vercel.app/api/inbound/email?secret=<INBOUND_SECRET>` and save.
+4. In Vercel, add `INBOUND_EMAIL_ADDRESS` (the address from step 2) and `INBOUND_SECRET` (the same random text as in the webhook URL), then redeploy.
+5. Open a project's **Knowledge base** tab and copy its forwarding address.
+
+Only emails sent **from** `ADMIN_EMAIL`, a project's alert address, or an address in `INBOUND_ALLOWED_SENDERS` are accepted. Add your work address there, for example `INBOUND_ALLOWED_SENDERS=maham.khan@yourcompany.com`. Emails with very large attachments (over about 4 MB in total) can't be delivered to Vercel; upload those files by hand. If your company blocks automatic forwarding to outside addresses, manual forwarding usually still works.
+
+## What's in each project
+
+- **Questions:** client questions the assistant couldn't answer, with a suggested reply. Tick *Use in all projects* to make an answer shared knowledge.
+- **Insights:** answer rate, question volume and your reply time for this project.
+- **Tracker:** who owes what. Action items are found automatically in emails you add or forward. You confirm them, and confirmed items show on the client's page (*Open items*) and the assistant can answer "what's pending?".
+- **Knowledge base:** documents, emails and notes. Any source can be marked *Use in all projects* for general Wavetec knowledge (keep bank-specific details out).
+- **Client docs:** one click writes an FAQ, prerequisites checklist, project brief or status update from the project's sources. Edit it, download it as Word or PDF, or show it on the client's page.
 
 ## Using it
 

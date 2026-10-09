@@ -3,7 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "./client-utils";
 import Markdown from "./Markdown";
+import Modal from "./Modal";
 import ThemeToggle from "./ThemeToggle";
+
+type InfoItem = { id: string; title: string; owner: "client" | "us"; owner_name: string; due_date: string | null };
+type InfoDoc = { id: string; kind: string; title: string; updated_at: string };
 
 type Msg = {
   id: string;
@@ -55,6 +59,9 @@ export default function Chat({ slug, projectName, clientName, welcome, starters,
   const [askEmail, setAskEmail] = useState(false);
   const [contact, setContact] = useState({ name: "", email: "" });
   const [contactSaved, setContactSaved] = useState(false);
+  const [info, setInfo] = useState<{ items: InfoItem[]; docs: InfoDoc[] }>({ items: [], docs: [] });
+  const [panel, setPanel] = useState<"items" | "docs" | null>(null);
+  const [openDoc, setOpenDoc] = useState<{ title: string; content: string } | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -102,6 +109,22 @@ export default function Chat({ slug, projectName, clientName, welcome, starters,
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!unlocked || !ready) return;
+    api<{ items: InfoItem[]; docs: InfoDoc[] }>(`/api/chat/${slug}/info`, { headers: code ? { "x-access-code": code } : undefined })
+      .then(setInfo)
+      .catch(() => {});
+  }, [unlocked, ready, slug, code]);
+
+  async function showDoc(id: string) {
+    try {
+      const d = await api<{ document: { title: string; content: string } }>(`/api/chat/${slug}/docs/${id}`, { headers: code ? { "x-access-code": code } : undefined });
+      setOpenDoc(d.document);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -204,6 +227,16 @@ export default function Chat({ slug, projectName, clientName, welcome, starters,
         {unlocked && messages.length > 0 && (
           <button className="btn btn-sm btn-ghost" onClick={newChat}>
             New chat
+          </button>
+        )}
+        {unlocked && info.items.length > 0 && (
+          <button className="btn btn-sm" onClick={() => setPanel("items")}>
+            Open items <span className="count">{info.items.length}</span>
+          </button>
+        )}
+        {unlocked && info.docs.length > 0 && (
+          <button className="btn btn-sm" onClick={() => setPanel("docs")}>
+            Documents
           </button>
         )}
         <ThemeToggle />
@@ -372,6 +405,81 @@ export default function Chat({ slug, projectName, clientName, welcome, starters,
           </p>
         </div>
       </footer>
+      {panel && (
+        <Modal title={panel === "items" ? "Open items" : "Project documents"} onClose={() => setPanel(null)}>
+          <div className="modal-body stack">
+            {panel === "items" ? (
+              <>
+                {(["client", "us"] as const).map((o) => {
+                  const list = info.items.filter((i) => i.owner === o);
+                  return (
+                    <div key={o} className="stack" style={{ gap: 6 }}>
+                      <h3>{o === "client" ? "Waiting on your team" : "Waiting on the project team"}</h3>
+                      {list.length === 0 ? (
+                        <p className="small muted">Nothing open.</p>
+                      ) : (
+                        <div className="card info-list">
+                          <div className="list">
+                            {list.map((i) => (
+                              <div key={i.id} className="list-item">
+                                <div className="grow">
+                                  <div style={{ fontWeight: 560 }}>{i.title}</div>
+                                  {i.owner_name && <div className="tiny muted">{i.owner_name}</div>}
+                                </div>
+                                {i.due_date && (
+                                  <span className={`age${i.due_date < new Date().toISOString().slice(0, 10) ? " late" : ""}`}>
+                                    {new Date(`${i.due_date}T12:00:00Z`).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
+                                  </span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                <p className="tiny muted">Kept up to date by the project team.</p>
+              </>
+            ) : (
+              <div className="card info-list">
+                <div className="list">
+                  {info.docs.map((d) => (
+                    <div
+                      key={d.id}
+                      className="list-item clickable"
+                      onClick={() => {
+                        setPanel(null);
+                        showDoc(d.id);
+                      }}
+                    >
+                      <div className="grow" style={{ fontWeight: 560 }}>
+                        {d.title}
+                      </div>
+                      <span className="btn btn-sm btn-ghost">Open</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
+      {openDoc && (
+        <Modal title={openDoc.title} onClose={() => setOpenDoc(null)}>
+          <div className="modal-body doc-render">
+            <Markdown>{openDoc.content}</Markdown>
+          </div>
+          <div className="modal-foot">
+            <button className="btn" onClick={() => window.print()}>
+              Print
+            </button>
+            <button className="btn btn-primary" onClick={() => setOpenDoc(null)}>
+              Close
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
