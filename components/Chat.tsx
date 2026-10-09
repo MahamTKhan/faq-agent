@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "./client-utils";
 import Markdown from "./Markdown";
+import ThemeToggle from "./ThemeToggle";
 
 type Msg = {
   id: string;
@@ -205,6 +206,7 @@ export default function Chat({ slug, projectName, clientName, welcome, starters,
             New chat
           </button>
         )}
+        <ThemeToggle />
       </div>
     </header>
   );

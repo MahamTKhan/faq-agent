@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import AdminBar from "./AdminBar";
 import { api, sizeLabel, timeAgo } from "./client-utils";
 import Markdown from "./Markdown";
+import { ActivityChart, StatTiles, type DayPoint, type Totals } from "./charts";
 
 type Project = {
   id: string;
@@ -43,7 +44,7 @@ type Conversation = {
   escalated_count: number;
 };
 type Data = { project: Project; documents: Doc[]; questions: Question[]; conversations: Conversation[]; adminEmail: string };
-type Tab = "questions" | "knowledge" | "conversations" | "settings";
+type Tab = "questions" | "insights" | "knowledge" | "conversations" | "settings";
 
 function useToast() {
   const [toast, setToast] = useState<{ text: string; error?: boolean } | null>(null);
@@ -81,7 +82,7 @@ export default function ProjectAdmin({ id, appName, mailReady, aiReady }: { id: 
     if (q) {
       setFocusQ(q);
       setTab("questions");
-    } else if (t && ["questions", "knowledge", "conversations", "settings"].includes(t)) setTab(t);
+    } else if (t && ["questions", "insights", "knowledge", "conversations", "settings"].includes(t)) setTab(t);
     reload();
   }, [reload]);
 
@@ -185,6 +186,9 @@ export default function ProjectAdmin({ id, appName, mailReady, aiReady }: { id: 
           <button className={`tab${tab === "questions" ? " active" : ""}`} onClick={() => go("questions")}>
             Questions <span className={`count${open ? " hot" : ""}`}>{open}</span>
           </button>
+          <button className={`tab${tab === "insights" ? " active" : ""}`} onClick={() => go("insights")}>
+            Insights
+          </button>
           <button className={`tab${tab === "knowledge" ? " active" : ""}`} onClick={() => go("knowledge")}>
             Knowledge base <span className="count">{data.documents.length}</span>
           </button>
@@ -197,12 +201,48 @@ export default function ProjectAdmin({ id, appName, mailReady, aiReady }: { id: 
         </div>
 
         {tab === "questions" && <QuestionsTab data={data} reload={reload} toast={toast.show} mailReady={mailReady} focusId={focusQ} />}
+        {tab === "insights" && <InsightsTab projectId={data.project.id} oldestOpen={data.questions.filter((q) => q.status === "open").map((q) => q.created_at).sort()[0] || null} />}
         {tab === "knowledge" && <KnowledgeTab data={data} reload={reload} toast={toast.show} aiReady={aiReady} />}
         {tab === "conversations" && <ConversationsTab data={data} reload={reload} />}
         {tab === "settings" && <SettingsTab data={data} reload={reload} toast={toast.show} />}
       </main>
       {toast.node}
     </>
+  );
+}
+
+/* ───────────────────────────── Insights ───────────────────────────── */
+
+function InsightsTab({ projectId, oldestOpen }: { projectId: string; oldestOpen: string | null }) {
+  const [stats, setStats] = useState<{ totals: Totals; daily: DayPoint[] } | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    api<{ totals: Totals; daily: DayPoint[] }>(`/api/admin/projects/${projectId}/stats`)
+      .then(setStats)
+      .catch((e) => setError(e.message));
+  }, [projectId]);
+  if (error) return <div className="notice error">{error}</div>;
+  if (!stats)
+    return (
+      <div className="row muted">
+        <span className="spinner" /> Loading insights…
+      </div>
+    );
+  return (
+    <section className="stack-lg">
+      <StatTiles t={stats.totals} oldestOpen={oldestOpen} />
+      <div className="card">
+        <ActivityChart data={stats.daily} title="Client questions" subtitle="Last 30 days, this project" />
+      </div>
+      {stats.totals.answerRate30 !== null && stats.totals.answerRate30 < 0.7 && (
+        <div className="notice info">
+          <span>
+            The assistant answered fewer than 7 in 10 questions here. Check the Questions tab for what clients ask about, and add documents or answered
+            questions that cover it.
+          </span>
+        </div>
+      )}
+    </section>
   );
 }
 

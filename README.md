@@ -38,6 +38,7 @@ The tables are created automatically on first use. There's nothing to run.
 | `ADMIN_EMAIL` | Where new-question alerts go |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | Email sending details, see below |
 | `APP_NAME` *(optional)* | Name shown in the app and emails, default "Project Desk" |
+| `ADMIN_NAME` *(optional)* | Your first name, for the dashboard greeting |
 
 **Email sending options**
 
