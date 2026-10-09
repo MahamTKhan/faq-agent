@@ -104,12 +104,17 @@ export async function answerQuestion(opts: {
 
   const res = await callClaude({
     model: MODEL,
-    max_tokens: 2500,
+    max_tokens: 8000,
     system,
     tools: [RESPOND_TOOL],
-    tool_choice: { type: "tool", name: "respond" },
+    tool_choice: { type: "auto" },
+    // max_tokens: 2500,
+    // system,
+    // tools: [RESPOND_TOOL],
+    // tool_choice: { type: "tool", name: "respond" },
     messages: opts.history.map((t) => ({ role: t.role, content: t.content })),
   });
+      
 
   const tool = res.content.find((b) => b.type === "tool_use" && b.name === "respond");
   const input = (tool?.input || {}) as Partial<BotResult>;
@@ -118,7 +123,14 @@ export async function answerQuestion(opts: {
     .map((b) => b.text)
     .join("\n")
     .trim();
-  const status = input.status === "answered" || input.status === "chitchat" ? input.status : "escalate";
+  // const status = input.status === "answered" || input.status === "chitchat" ? input.status : "escalate";
+    const status = tool
+    ? input.status === "answered" || input.status === "chitchat"
+      ? input.status
+      : "escalate"
+    : textFallback
+      ? "answered"
+      : "escalate";
   return {
     status,
     answer: (input.answer || textFallback || "I've passed your question to the project team, who will get back to you.").trim(),
