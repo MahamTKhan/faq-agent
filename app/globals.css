@@ -483,3 +483,8 @@ button, input, textarea, select { font: inherit; color: inherit; }
   .modal-body { overflow: visible; }
   .modal-foot, .modal .card-head button { display: none; }
 }
+
+/* ── Weekly report (always shown as a white page) ───── */
+.report-paper { background: #ffffff; color: #111827; border-radius: 10px; padding: 30px 34px; border: 1px solid var(--line); box-shadow: var(--shadow); color-scheme: light; }
+.report-paper table { display: table; }
+@media (max-width: 640px) { .report-paper { padding: 18px 14px; overflow-x: auto; } }

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import AdminBar from "./AdminBar";
+import WeeklyReportButton from "./WeeklyReport";
 import { ActivityChart, Meter, Sparkline, StatTiles, type DayPoint, type Totals } from "./charts";
 import { api, timeAgo } from "./client-utils";
 
@@ -141,7 +142,10 @@ export default function AdminHome({ appName, adminName }: { appName: string; adm
               )}
             </h1>
           </div>
-          {newButton}
+          <div className="row wrap">
+            {data && data.projects.length > 0 && <WeeklyReportButton />}
+            {newButton}
+          </div>
         </section>
 
         {error && <div className="notice error">{error}</div>}

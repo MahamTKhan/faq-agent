@@ -7,6 +7,9 @@ const tool = (name, input) => ({ content: [{ type: "tool_use", id: "toolu_test",
 
 function reply(body) {
   const tools = (body.tools || []).map((t) => t.name);
+  if (tools.includes("write_report")) {
+    return tool("write_report", { summary: ["Two projects active this week; one item overdue on our side."], projects: [] });
+  }
   if (tools.includes("record_items")) {
     return tool("record_items", {
       new_items: [{ title: "Share VPN access for the vendor team", owner: "client", owner_name: "Bank IT", due_date: "2030-01-15", quote: "Please share VPN access by 15 Jan." }],

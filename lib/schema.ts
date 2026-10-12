@@ -120,4 +120,14 @@ CREATE TABLE IF NOT EXISTS generated_docs (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS generated_docs_project_idx ON generated_docs(project_id, updated_at DESC);
+
+-- v3: weekly all-projects reports
+CREATE TABLE IF NOT EXISTS portfolio_reports (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  period_start timestamptz NOT NULL,
+  period_end timestamptz NOT NULL,
+  data jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS portfolio_reports_created_idx ON portfolio_reports(created_at DESC);
 `;

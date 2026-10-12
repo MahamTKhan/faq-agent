@@ -132,6 +132,19 @@ async function waitFor(fn, tries = 20) {
   const st = await call(`/api/admin/projects/${pid}/stats`);
   ok(st.status === 200 && st.data.daily?.length === 30, "project stats load");
 
+  const rep = await call("/api/admin/reports", { body: {} });
+  ok(rep.status === 201 && rep.data.report?.projects?.length === 2, "weekly report covers every project");
+  const rp = rep.data.report?.projects?.find((x) => x.id === pid);
+  ok(rp && rp.metrics.questions >= 2 && rp.waiting_on_client.length === 1 && rp.waiting_on_us.length === 1, "report figures come from the database");
+  ok(rp && ["On track", "At risk", "Blocked", "No activity"].includes(rp.status), `report status filled in (${rp?.status})`);
+  ok(rep.data.report?.summary?.length === 1, "report summary written");
+  const reqs3 = await (await fetch(`${MOCK}/__requests`)).json();
+  const repReq = [...reqs3].reverse().find((r) => (r.tools || []).some((t) => t.name === "write_report"));
+  ok(JSON.stringify(repReq?.messages || "").includes("Kiosk Infra") && JSON.stringify(repReq?.messages || "").includes("Fwd: Firewall ports"), "report briefing includes projects and this week's emails");
+  const list = await call("/api/admin/reports");
+  ok(list.data.reports?.[0]?.id === rep.data.id, "report saved to history");
+  ok((await call(`/api/admin/reports/${rep.data.id}`)).data.report?.title?.startsWith("Weekly project report"), "past report reopens");
+
   for (const path of ["/login", `/p/${slug}`, "/admin"]) {
     const r = await fetch(BASE + path, { headers: { cookie }, redirect: "manual" });
     ok(r.status === 200, `page ${path} renders`);
